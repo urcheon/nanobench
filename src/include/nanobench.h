@@ -672,6 +672,24 @@ public:
     Bench& run(Op&& op);
 
     /**
+     * @brief Runs a benchmark with a name, a setup, an operation, and a teardown. This is the core implementation.
+     * @tparam SetupOp A callable that is run once before each measurement.
+     * @tparam Op The code to benchmark.
+     * @tparam TeardownOp A callable that is run once after each measurement.
+     */
+    template <typename SetupOp, typename Op, typename TeardownOp>
+    ANKERL_NANOBENCH(NOINLINE)
+    Bench& run(char const* benchmarkName, SetupOp&& setup, Op&& op, TeardownOp&& teardown);
+
+    template <typename SetupOp, typename Op, typename TeardownOp>
+    ANKERL_NANOBENCH(NOINLINE)
+    Bench& run(std::string const& benchmarkName, SetupOp&& setup, Op&& op, TeardownOp&& teardown);
+
+    template <typename SetupOp, typename Op, typename TeardownOp>
+    ANKERL_NANOBENCH(NOINLINE)
+    Bench& run(SetupOp&& setup, Op&& op, TeardownOp&& teardown);
+
+    /**
      * @brief Title of the benchmark, will be shown in the table header. Changing the title will start a new markdown table.
      *
      * @param benchmarkTitle The title of the benchmark.
@@ -1207,14 +1225,15 @@ constexpr uint64_t Rng::rotl(uint64_t x, unsigned k) noexcept {
     return (x << k) | (x >> (64U - k));
 }
 
-template <typename Op>
+template <typename SetupOp, typename Op, typename TeardownOp>
 ANKERL_NANOBENCH_NO_SANITIZE("integer")
-Bench& Bench::run(Op&& op) {
+Bench& Bench::run(SetupOp&& setup, Op&& op, TeardownOp&& teardown) {
     // It is important that this method is kept short so the compiler can do better optimizations/ inlining of op()
     detail::IterationLogic iterationLogic(*this);
     auto& pc = detail::performanceCounters();
 
     while (auto n = iterationLogic.numIters()) {
+        setup();
         pc.beginMeasure();
         Clock::time_point const before = Clock::now();
         while (n-- > 0) {
@@ -1222,6 +1241,7 @@ Bench& Bench::run(Op&& op) {
         }
         Clock::time_point const after = Clock::now();
         pc.endMeasure();
+        teardown();
         pc.updateResults(iterationLogic.numIters());
         iterationLogic.add(after - before, pc);
     }
@@ -1229,7 +1249,25 @@ Bench& Bench::run(Op&& op) {
     return *this;
 }
 
+template <typename SetupOp, typename Op, typename TeardownOp>
+Bench& Bench::run(char const* benchmarkName, SetupOp&& setup, Op&& op, TeardownOp&& teardown) {
+    name(benchmarkName);
+    return run(std::forward<SetupOp>(setup), std::forward<Op>(op), std::forward<TeardownOp>(teardown));
+}
+
+template <typename SetupOp, typename Op, typename TeardownOp>
+Bench& Bench::run(std::string const& benchmarkName, SetupOp&& setup, Op&& op, TeardownOp&& teardown) {
+    name(benchmarkName);
+    return run(std::forward<SetupOp>(setup), std::forward<Op>(op), std::forward<TeardownOp>(teardown));
+}
+
+
 // Performs all evaluations.
+template <typename Op>
+Bench& Bench::run(Op&& op) {
+    return run([]{}, std::forward<Op>(op), []{});
+}
+
 template <typename Op>
 Bench& Bench::run(char const* benchmarkName, Op&& op) {
     name(benchmarkName);
@@ -2495,7 +2533,7 @@ public:
         return x;
     }
 
-    template <typename Op>
+    template <typename SetupOp, typename Op, typename TeardownOp>
     ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
     void calibrate(Op&& op) {
         // clear current calibration data,
@@ -2509,9 +2547,11 @@ public:
             v = (std::numeric_limits<uint64_t>::max)();
         }
         for (size_t iter = 0; iter < 100; ++iter) {
+            setup();
             beginMeasure();
             op();
             endMeasure();
+            teardown();
             if (mHasError) {
                 return;
             }
@@ -2563,6 +2603,12 @@ public:
                 mLoopOverhead[i] = divRounded(overhead, numIters);
             }
         }
+    }
+
+    template <typename Op>
+    ANKERL_NANOBENCH_NO_SANITIZE("integer", "undefined")
+    void calibrate(Op&& op) {
+        calibrate([]{}, std::forward<Op>(op), []{});
     }
 
 private:
